@@ -1,0 +1,97 @@
+import numpy as np
+import imageio
+import os
+import argparse
+from tqdm import tqdm
+from .renderer_samples import get_renderer_samples
+
+
+def get_rotation(theta=np.pi/3):
+    import src.utils.rotation_conversions as geometry
+    import torch
+    axis = torch.tensor([0, 1, 0], dtype=torch.float)
+    axisangle = theta*axis
+    matrix = geometry.axis_angle_to_matrix(axisangle)
+    return matrix.numpy()
+
+
+def render_video(meshes, key, action, renderer, savepath, background, cam=(0.75, 0.75, 0, 0.10), color=[0.11, 0.53, 0.8]):
+    writer = imageio.get_writer(savepath, fps=30)
+    # center the first frame
+    meshes = meshes - meshes[0].mean(axis=0)
+    # matrix = get_rotation(theta=np.pi/4)
+    # meshes = meshes[45:]
+    # meshes = np.einsum("ij,lki->lkj", matrix, meshes)
+    imgs = []
+    for mesh in tqdm(meshes, desc=f"Visualize {key}, action {action}"):
+        img = renderer.render(background, mesh, cam, color=color)
+        imgs.append(img)
+        #show(img)
+
+    imgs = np.array(imgs)
+    '''
+    masks = ~(imgs/255. > 0.96).all(-1)
+
+    coords = np.argwhere(masks.sum(axis=0))
+    y1, x1 = coords.min(axis=0)
+    y2, x2 = coords.max(axis=0)
+    for cimg in imgs[:, y1-20:y2+20, x1-20:x2+20]:
+        writer.append_data(cimg)
+    '''
+    for img in imgs:
+        writer.append_data(img)  
+    writer.close()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("filename")
+    opt = parser.parse_args()
+    filename = opt.filename
+    savefolder = os.path.splitext(filename)[0]
+    os.makedirs(savefolder, exist_ok=True)
+    savefolder = os.path.join(savefolder, 'examples')
+    os.makedirs(savefolder, exist_ok=True)
+
+    output = np.load(filename)
+    #print(output)
+    if output.shape[0] == 3:
+        visualization, generation, reconstruction = output
+        output = {"visualization": visualization,
+                  "generation": generation,
+                  "reconstruction": reconstruction}
+    else:
+        # output = {f"generation_{key}": output[key] for key in range(2)} #  len(output))}
+        # output = {f"generation_{key}": output[key] for key in range(len(output))}
+        #output = {f"generation_{key}": output[key] for key in range(len(output))}
+        output = {f"generation_gen": output}
+
+    width = 1024
+    height = 1024
+    
+    #background = np.zeros((height, width, 3))
+
+    from PIL import Image
+
+    bg_path = '/home/faye/Documents/smil/bg_img/infant_bg/bg3.jpg'
+    bg_image = Image.open(bg_path).convert('RGB')
+    background = np.array(bg_image)
+
+    renderer = get_renderer_samples(background, width, height)
+
+    # if str(action) == str(1) and str(key) == "generation_4":
+    for key in output:
+        print(key)
+        vidmeshes = output[key]
+        for idx in range(len(vidmeshes)):
+            samples = vidmeshes[idx]
+            for action in range(len(samples)):
+                if action == 0 and idx == 0:
+                    print(samples[action].shape)
+                    meshes = samples[action].transpose(2, 0, 1)
+                    path = os.path.join(savefolder, "action{}_{}_{}.mp4".format(action, idx, key))
+                    render_video(meshes, key, action, renderer, path, background)
+
+
+if __name__ == "__main__":
+    main()
